@@ -1,0 +1,5 @@
+openpyxl
+playwright
+
+# Playwright requires a browser install (one-time):
+#   playwright install chromium
