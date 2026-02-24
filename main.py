@@ -42,9 +42,11 @@ from output.csv_writer import write_csv, build_record
 from config import DEFAULT_OUTPUT_DIR, DEFAULT_OUTPUT_FILE, MAX_WORKERS
 
 
-# Active enrichers — add/remove/reorder here as logic is implemented
+# Identity runs first (solo) so its INCI name is available to logic enrichers
+IDENTITY_ENRICHER = IdentityEnricher()
+
+# Remaining enrichers — all support enrich_with_inci(ingredient_name, inci_name)
 ENRICHERS = [
-    IdentityEnricher(),
     SafetyEnricher(),
     SkinTypeEnricher(),
     AgeGroupEnricher(),
@@ -55,11 +57,27 @@ ENRICHERS = [
 
 
 def process_ingredient(ingredient_name: str) -> Dict[int, Any]:
-    """Run all enrichers on a single ingredient and merge the results."""
+    """
+    Run the full pipeline for one ingredient:
+      1. IdentityEnricher first → scrapes INCI name from CosIng
+      2. All other enrichers    → receive inci_name so logic modules can use it
+    """
     merged: Dict[int, Any] = {}
+
+    # Step 1: identity (must run first to get INCI name)
+    identity = IDENTITY_ENRICHER.safe_enrich(ingredient_name)
+    merged.update(identity)
+    inci_name = merged.get(1) or ingredient_name   # col 1 = INCI Name
+
+    # Step 2: remaining enrichers with inci_name context
     for enricher in ENRICHERS:
-        partial = enricher.safe_enrich(ingredient_name)
-        merged.update(partial)   # Later enrichers can override earlier ones
+            try:
+                partial = enricher.enrich_with_inci(ingredient_name, inci_name)
+            except Exception as e:
+                print(f"[{enricher.__class__.__name__}] failed: {e}")
+                partial = {}
+            merged.update(partial)
+
     return build_record(merged)
 
 
@@ -68,17 +86,6 @@ def run_pipeline(
     output_path: str,
     workers: int = MAX_WORKERS,
 ) -> str:
-    """
-    Process a list of ingredients through all enrichers and write the output CSV.
-
-    Args:
-        ingredients:  List of ingredient name strings.
-        output_path:  Destination CSV path.
-        workers:      Number of parallel threads.
-
-    Returns:
-        Path to the written CSV file.
-    """
     if not ingredients:
         print("No ingredients to process.")
         return ""
@@ -100,7 +107,7 @@ def run_pipeline(
                 print(f"  ✓ {ingredient}")
             except Exception as e:
                 print(f"  ✗ {ingredient}: {e}")
-                records[idx] = build_record({0: ingredient})   # empty record with name
+                records[idx] = build_record({0: ingredient})
 
     output = write_csv(records, output_path)
     print(f"\nOutput written to: {output}")
@@ -131,7 +138,6 @@ def parse_args() -> argparse.Namespace:
 def main():
     args = parse_args()
 
-    # ── Load ingredients ──────────────────────────────────────────────────────
     if args.csv:
         if not os.path.exists(args.csv):
             print(f"Error: CSV file not found: {args.csv}", file=sys.stderr)
@@ -152,7 +158,6 @@ def main():
         sys.exit(1)
 
     print(f"Loaded {len(ingredients)} ingredient(s).")
-
     run_pipeline(ingredients, output_path=args.output, workers=args.workers)
 
 

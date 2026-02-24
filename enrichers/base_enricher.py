@@ -1,8 +1,5 @@
 """
 enrichers/base_enricher.py — Abstract base class for all enrichers.
-
-Every enricher takes an ingredient name and returns a partial record dict
-keyed by column index (int). The pipeline merges all partial records.
 """
 
 from abc import ABC, abstractmethod
@@ -16,12 +13,18 @@ class BaseEnricher(ABC):
         """
         Analyse one ingredient and return a dict of {column_index: value}.
         Only include columns this enricher is responsible for.
-        Columns not returned will stay at their default (empty).
         """
         ...
 
+    def enrich_with_inci(self, ingredient_name: str, inci_name: str) -> Dict[int, Any]:
+        """
+        Enrichers that need the INCI name for logic overrides this method.
+        Default falls back to enrich() so existing enrichers work unchanged.
+        """
+        return self.enrich(ingredient_name)
+
     def safe_enrich(self, ingredient_name: str) -> Dict[int, Any]:
-        """Wraps enrich() with error handling so one failure doesn't stop the pipeline."""
+        """Wraps enrich() with error handling."""
         try:
             return self.enrich(ingredient_name)
         except Exception as e:

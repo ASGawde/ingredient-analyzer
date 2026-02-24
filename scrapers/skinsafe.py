@@ -1,46 +1,19 @@
 """
 scrapers/skinsafe.py — Scrape SkinSafe for ingredient badge data.
 
-Extracts:
-  - Teen safe        → col 31
-  - Vegetarian       → col 37
-  - Vegan            → col 38
-  - Gluten-free      → col 39
-  - Paleo            → col 40
-  - Unscented        → col 41
-  - Paraben-free     → col 42
-  - Sulphate-free    → col 43
-  - Silicon-free     → col 44
-  - Nut-free         → col 45
-  - Soy-free         → col 46
-  - Latex-free       → col 47
-  - Sesame-free      → col 48
-  - Citrus-free      → col 49
-  - Dye-free         → col 50
-  - Fragrance-free   → col 51
-  - Scent-free       → col 52
-  - Seafood-free     → col 53
-  - Dairy-free       → col 54
-  - Description      → col 6 (fallback when CosIng has none)
-
-Badge values:
-  "Yes"       — badge present on SkinSafe page
-  "No"        — ingredient name contains a known keyword for that category
-  "Not found" — ingredient not found on SkinSafe at all
-  None        — found on SkinSafe but no signal either way
-
-Uses Playwright (single shared browser across batch for efficiency).
-Install: pip install playwright && playwright install chromium
+Approach:
+  1. Call JSON search API to get the ingredient page URL
+  2. Load that URL with Playwright to get badge data
 """
 
 import asyncio
+import requests
 from typing import Optional
 from dataclasses import dataclass
 
+SKINSAFE_BASE    = "https://www.skinsafeproducts.com"
+SKINSAFE_API     = "https://www.skinsafeproducts.com/users/search"
 
-SKINSAFE_BASE = "https://www.skinsafeproducts.com/ingredients"
-
-# Badge keyword checks against page text
 _BADGE_KEYWORDS: dict = {
     "teen":           ["teen safe"],
     "vegetarian":     ["vegetarian"],
@@ -63,7 +36,6 @@ _BADGE_KEYWORDS: dict = {
     "dairy_free":     ["dairy free", "lactose free", "milk free"],
 }
 
-# If ingredient name contains these → mark field as "No"
 _NAME_CONTAINS_NO: dict = {
     "gluten_free":    ["wheat", "barley", "gluten", "triticum"],
     "nut_free":       ["almond", "walnut", "hazelnut", "cashew", "pistachio",
@@ -78,7 +50,6 @@ _NAME_CONTAINS_NO: dict = {
     "silicon_free":   ["silicone", "dimethicone", "cyclomethicone", "siloxane"],
 }
 
-# Lines containing these strings are UI chrome, not descriptions
 _UI_SKIP = {
     "sign in", "register", "brands", "category", "premium",
     "explore", "trial", "subscribe", "log in", "search",
@@ -88,17 +59,29 @@ _UI_SKIP = {
 }
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+def _lookup_ingredient_url(ingredient: str) -> Optional[str]:
+    """
+    Call the SkinSafe search API and return the URL of the first
+    ingredient suggestion. Returns None if not found.
+    """
+    try:
+        resp = requests.get(
+            SKINSAFE_API,
+            params={"query": ingredient},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
-def _ingredient_to_slug(ingredient: str) -> str:
-    return (
-        ingredient.lower()
-        .replace(" ", "-")
-        .replace("/", "-")
-        .replace("(", "")
-        .replace(")", "")
-        .replace(",", "")
-    )
+        for suggestion in data.get("suggestions", []):
+            if suggestion.get("landing_page") == "ingredient":
+                return SKINSAFE_BASE + suggestion["url"]
+
+    except Exception as e:
+        print(f"  [SkinSafe API] lookup failed for '{ingredient}': {e}")
+
+    return None
 
 
 def _apply_name_based_nos(ingredient: str, badges: dict) -> dict:
@@ -113,14 +96,9 @@ def _apply_name_based_nos(ingredient: str, badges: dict) -> dict:
 
 
 def _extract_description(page_text: str, ingredient: str) -> Optional[str]:
-    """
-    Find the first substantial plain-text paragraph after the ingredient
-    name heading on the SkinSafe page.
-    """
     lines = [l.strip() for l in page_text.split("\n") if l.strip()]
     ing_upper = ingredient.upper()
 
-    # Find the heading line
     heading_idx = None
     for i, line in enumerate(lines):
         if line.upper() == ing_upper or line.upper().startswith(ing_upper):
@@ -132,18 +110,14 @@ def _extract_description(page_text: str, ingredient: str) -> Optional[str]:
     for line in search_lines:
         if len(line) < 60:
             continue
-        line_lower = line.lower()
-        if any(skip in line_lower for skip in _UI_SKIP):
+        if any(skip in line.lower() for skip in _UI_SKIP):
             continue
-        # Skip lines that are mostly uppercase (badges/labels)
         if sum(1 for c in line if c.isupper()) > len(line) * 0.5:
             continue
         return line[:500]
 
     return None
 
-
-# ── Data class ────────────────────────────────────────────────────────────────
 
 @dataclass
 class SkinsafeResult:
@@ -172,14 +146,17 @@ class SkinsafeResult:
     error:           Optional[str] = None
 
 
-# ── Core scraper ──────────────────────────────────────────────────────────────
-
 async def _scrape_one_with_browser(browser, ingredient: str) -> SkinsafeResult:
-    """Scrape a single ingredient using an already-open browser instance."""
     result = SkinsafeResult(ingredient_name=ingredient)
-    slug = _ingredient_to_slug(ingredient)
-    url = f"{SKINSAFE_BASE}/{slug}"
 
+    # ── Step 1: get URL from API (no browser needed) ──────────────────────────
+    url = _lookup_ingredient_url(ingredient)
+    if not url:
+        for field_name in _BADGE_KEYWORDS:
+            setattr(result, field_name, "Not found")
+        return result
+
+    # ── Step 2: load ingredient page with Playwright ──────────────────────────
     try:
         page = await browser.new_page()
         await page.goto(url, wait_until="networkidle", timeout=30_000)
@@ -188,19 +165,11 @@ async def _scrape_one_with_browser(browser, ingredient: str) -> SkinsafeResult:
         page_text = await page.inner_text("body")
         await page.close()
 
-        # Not found
-        if "not found" in page_text.lower() or "404" in page_text:
-            for field_name in _BADGE_KEYWORDS:
-                setattr(result, field_name, "Not found")
-            return result
-
         result.found = True
         text_lower = page_text.lower()
 
-        # Description
         result.description = _extract_description(page_text, ingredient)
 
-        # Badge checks
         badges: dict = {}
         for field_name, keywords in _BADGE_KEYWORDS.items():
             badges[field_name] = None
@@ -210,19 +179,20 @@ async def _scrape_one_with_browser(browser, ingredient: str) -> SkinsafeResult:
                     break
 
         badges = _apply_name_based_nos(ingredient, badges)
-
         for field_name, value in badges.items():
             setattr(result, field_name, value)
 
     except Exception as e:
+        try:
+            await page.close()
+        except Exception:
+            pass
         result.error = str(e)
         for field_name in _BADGE_KEYWORDS:
             setattr(result, field_name, "Not found")
 
     return result
 
-
-# ── Batch scraper ─────────────────────────────────────────────────────────────
 
 async def _scrape_batch(ingredients: list, delay_seconds: float = 1.0) -> list:
     from playwright.async_api import async_playwright
@@ -252,13 +222,10 @@ async def _scrape_batch(ingredients: list, delay_seconds: float = 1.0) -> list:
     return results
 
 
-# ── Cache + public API ────────────────────────────────────────────────────────
-
 _cache: dict = {}
 
 
 def scrape_skinsafe(ingredient: str) -> SkinsafeResult:
-    """Sync, cached. Opens its own browser."""
     key = ingredient.strip().lower()
     if key in _cache:
         return _cache[key]
@@ -277,7 +244,6 @@ def scrape_skinsafe(ingredient: str) -> SkinsafeResult:
 
 
 def scrape_skinsafe_batch_sync(ingredients: list, delay_seconds: float = 1.0) -> list:
-    """Sync batch — shares one browser. Updates cache."""
     to_scrape = [i for i in ingredients if i.strip().lower() not in _cache]
 
     if to_scrape:
