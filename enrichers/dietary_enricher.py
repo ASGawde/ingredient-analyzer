@@ -11,7 +11,13 @@ from typing import Dict, Any
 from .base_enricher import BaseEnricher
 from scrapers.skinsafe import scrape_skinsafe
 from logic.paleo import is_paleo
-
+from logic.silicone import is_silicone_free
+from logic.latex import is_latex_free
+from logic.sesame import is_sesame_free
+from logic.seafood import is_seafood_free
+from logic.dairy import is_dairy_free
+from logic.vegan import is_vegan
+from logic.vegetarian import is_vegetarian
 
 _COL_MAP = {
     "vegetarian":     37,
@@ -34,11 +40,22 @@ _COL_MAP = {
     "dairy_free":     54,
 }
 
+# Logic functions mapped to their column index
+_LOGIC_MAP = [
+    (37, is_vegetarian),   # Vegetarian
+    (38, is_vegan),        # Vegan
+    (40, is_paleo),        # Paleo
+    (44, is_silicone_free),# Silicon-free
+    (47, is_latex_free),   # Latex-free
+    (48, is_sesame_free),  # Sesame-free
+    (53, is_seafood_free), # Seafood-free
+    (54, is_dairy_free),   # Dairy-free
+]
+
 
 class DietaryEnricher(BaseEnricher):
 
     def enrich(self, ingredient_name: str) -> Dict[int, Any]:
-        # Without INCI name, use ingredient_name as fallback for logic
         return self.enrich_with_inci(ingredient_name, ingredient_name)
 
     def enrich_with_inci(self, ingredient_name: str, inci_name: str) -> Dict[int, Any]:
@@ -52,8 +69,9 @@ class DietaryEnricher(BaseEnricher):
                 result[col_idx] = value
 
         # ── Step 2: Logic overrides (INCI-based, always win) ─────────────────
-        paleo_verdict = is_paleo(inci_name)
-        if paleo_verdict is not None:
-            result[40] = paleo_verdict
+        for col_idx, logic_fn in _LOGIC_MAP:
+            verdict = logic_fn(inci_name)
+            if verdict is not None:
+                result[col_idx] = verdict
 
         return result

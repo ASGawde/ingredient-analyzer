@@ -1,17 +1,29 @@
 """
 enrichers/skin_type_enricher.py
-
-Placeholder enricher for skin-type-specific columns.
-Currently returns no additional data; ready to be wired to future scrapers.
+Responsible for cols 15–30:
+  Skin type (Normal, Dry, Oily, Combination) — cols 15-18     TODO
+  Sensitivity scale (6 levels)               — cols 19-24     ✓ logic
+  Acne-prone scale (6 levels)                — cols 25-30     TODO
 """
 
 from typing import Dict, Any
 from .base_enricher import BaseEnricher
+from logic.sensitivity import get_sensitivity_ratings
 
 
 class SkinTypeEnricher(BaseEnricher):
-    """Stub implementation — fills no columns yet."""
 
     def enrich(self, ingredient_name: str) -> Dict[int, Any]:
-        # TODO: Implement logic for skin-type suitability, dryness/oiliness flags, etc.
-        return {}
+        return self.enrich_with_inci(ingredient_name, ingredient_name)
+
+    def enrich_with_inci(self, ingredient_name: str, inci_name: str) -> Dict[int, Any]:
+        result: Dict[int, Any] = {}
+
+        # ── Sensitivity ratings (cols 19-24) ──────────────────────────────────
+        sensitivity = get_sensitivity_ratings(inci_name)
+        result.update(sensitivity)
+
+        # TODO: skin type suitability (cols 15-18)
+        # TODO: acne-prone suitability (cols 25-30)
+
+        return result
