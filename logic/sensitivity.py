@@ -245,7 +245,8 @@ def get_sensitivity_ratings(inci_name: str) -> dict:
     cats = _get_categories(inci_name)
 
     if not cats:
-        return {}   # No opinion — defer to other sources
+        # No irritant category — suitable for all sensitivity levels
+        return {col: "Yes" for col in _EXCLUSIONS}
 
     result = {}
     for col_idx, excluded_cats in _EXCLUSIONS.items():

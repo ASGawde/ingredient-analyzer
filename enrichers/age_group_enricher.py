@@ -1,25 +1,24 @@
 """
 enrichers/age_group_enricher.py
+Responsible for cols 31-36 (age group flags).
 
-Responsible for cols 31–36: Teen, 20s, 30s, 40s, 50s, 60+
-
-Teen (col 31) comes from SkinSafe's "Teen safe" badge.
-20s–60+ (cols 32–36) are TODO — no source yet.
+SkinSafe teen badge is now handled by SkinSafeDBEnricher — no live scraping here.
 """
 
 from typing import Dict, Any
 from .base_enricher import BaseEnricher
-from scrapers.skinsafe import scrape_skinsafe
+from logic.age import get_age_ratings
 
 
 class AgeGroupEnricher(BaseEnricher):
 
     def enrich(self, ingredient_name: str) -> Dict[int, Any]:
+        return self.enrich_with_inci(ingredient_name, ingredient_name)
+
+    def enrich_with_inci(self, ingredient_name: str, inci_name: str) -> Dict[int, Any]:
         result: Dict[int, Any] = {}
 
-        ss = scrape_skinsafe(ingredient_name)
-        if ss.teen is not None:
-            result[31] = ss.teen   # "Yes" / "No" / "Not found"
+        # Logic-based age ratings
+        result.update(get_age_ratings(inci_name))
 
-        # TODO cols 32–36 (20s–60+): no data source identified yet
         return result

@@ -115,17 +115,25 @@ async def _scrape_one(ingredient: str) -> CosingResult:
                 return result  # Not found
 
             # ── Click first exact-match result link ───────────────────────────
-            # Target the INCI Name column links in the results table only,
-            # matching the full search term (uppercased) to avoid partial matches
-            # like "NIACINAMIDE/YEAST POLYPEPTIDE" when searching "niacinamide"
-            target = search_term.upper()
+            # Normalise both sides before comparing so that spacing/hyphen
+            # differences don't cause misses (e.g. "1,2 Epoxybutane" vs
+            # "1,2-EPOXYBUTANE" on CosIng).
+            import re as _re
+
+            def _norm(s: str) -> str:
+                """Lowercase, collapse whitespace, strip hyphens."""
+                return _re.sub(r"[\s\-]+", "", s.strip().lower())
+
+            target_norm = _norm(search_term)
             links = await page.query_selector_all("table a")
             clicked = False
 
+            # Pass 1: normalised exact match
             for link in links:
                 try:
-                    link_text = (await link.inner_text()).strip().upper()
-                    if link_text == target:
+                    link_text = (await link.inner_text()).strip()
+                    print(f"  [CosIng link] '{link_text}'")
+                    if _norm(link_text) == target_norm:
                         await link.click()
                         await asyncio.sleep(3)
                         clicked = True
@@ -133,14 +141,26 @@ async def _scrape_one(ingredient: str) -> CosingResult:
                 except Exception:
                     continue
 
-            # Fallback: first link that starts with the first word
+            # Pass 2: normalised startswith (handles trailing descriptors)
             if not clicked:
-                first_word = target.split()[0]
-                links = await page.query_selector_all("table a")
                 for link in links:
                     try:
-                        link_text = (await link.inner_text()).strip().upper()
-                        if link_text.startswith(first_word):
+                        link_text = (await link.inner_text()).strip()
+                        if _norm(link_text).startswith(target_norm):
+                            await link.click()
+                            await asyncio.sleep(3)
+                            clicked = True
+                            break
+                    except Exception:
+                        continue
+
+            # Pass 3: target starts with link text (ingredient name is a prefix)
+            if not clicked:
+                for link in links:
+                    try:
+                        link_text = (await link.inner_text()).strip()
+                        norm_link = _norm(link_text)
+                        if norm_link and target_norm.startswith(norm_link):
                             await link.click()
                             await asyncio.sleep(3)
                             clicked = True

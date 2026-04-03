@@ -2,7 +2,7 @@
 schema.py — Single source of truth for all column definitions.
 
 The output CSV has two header rows (matching the original format):
-  Row 0: numeric index (0–89) for the first 90 cols, blank for the last 4
+  Row 0: numeric index (0–89) for the first 90 cols, blank for the last 5
   Row 1: actual column names
 """
 
@@ -138,22 +138,9 @@ COLUMNS = [
     ("Predicted or manual",              None, "str",   None),
     ("Correction made",                  None, "str",   None),
     ("Description",                      None, "str",   None),   # correction description
+    ("Raw CosIng Role",                    None, "str",   None),   # raw CosIng function string
 ]
 
-# Derived helpers used by output/csv_writer.py
-COLUMN_NAMES   = [c[0] for c in COLUMNS]          # 94 names (with duplicates)
-NUMERIC_INDEX  = [c[1] for c in COLUMNS]          # row-0 values (int or None)
-COLUMN_TYPES   = {i: c[2] for i, c in enumerate(COLUMNS)}
-COLUMN_DEFAULTS= {i: c[3] for i, c in enumerate(COLUMNS)}
-
-# Positional groups (by column index) for enricher routing
-GROUPS = {
-    "identity":   list(range(0, 3)),
-    "safety":     list(range(3, 15)),
-    "skin_type":  list(range(15, 31)),
-    "age":        list(range(31, 37)),
-    "dietary":    list(range(37, 55)),
-    "concerns":   list(range(55, 79)),
-    "benefits":   list(range(79, 88)),
-    "conc_qa":    list(range(88, 94)),
-}
+# Derived helpers
+COLUMN_NAMES  = [c[0] for c in COLUMNS]
+NUMERIC_INDEX = [c[1] for c in COLUMNS]

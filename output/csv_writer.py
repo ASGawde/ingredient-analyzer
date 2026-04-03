@@ -1,7 +1,7 @@
 """
 output/csv_writer.py — Writes enriched ingredient data to CSV in the exact
 original format:
-  Row 0: numeric index (0–89 for first 90 cols, blank for last 4)
+  Row 0: numeric index (0–89 for first 90 cols, blank for last 5)
   Row 1: column names
   Row 2+: data rows
 """

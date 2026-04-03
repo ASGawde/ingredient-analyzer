@@ -1,39 +1,45 @@
 """
-ingestion/csv_reader.py — Read ingredient names from a CSV file.
+ingestion/csv_reader.py — Read ingredient names (and optional pre-filled fields)
+from a CSV file.
 
-Handles:
-  - Standard single/multi-column CSVs with a header row
-  - The Skingenius two-row header format (numeric index row + column name row)
-  - A single column of ingredient names with or without a header
+Returns a list of dicts with at minimum:
+  {"name": "Niacinamide"}
+
+If the CSV has additional columns like "Role in formulation", they are included:
+  {"name": "Niacinamide", "role": "Texture Enhancer"}
 """
 
 import csv
-from typing import List, Optional
+from typing import List, Dict, Optional
 
 
-# Values in the first cell that indicate a non-data row to skip
 _SKIP_FIRST_CELL = {"ingredient name", "ingredient", "name", "inci name", "0"}
+
+# Columns we optionally read if present
+_OPTIONAL_COLS = {
+    "Role in formulation": "role",
+    "INCI Name":           "inci",
+    "Allergen potential":  "allergen",
+    "Risk of irritation":  "irritation",
+}
 
 
 def _looks_like_index_row(row: List[str]) -> bool:
-    """Return True if a row appears to be a numeric index row (e.g. '0','1','2',...)."""
     numeric = sum(1 for v in row if v.strip().isdigit())
     return numeric >= max(3, len(row) // 2)
 
 
-def read_csv(filepath: str, name_col: Optional[str] = "Ingredient name") -> List[str]:
+def read_csv(
+    filepath: str,
+    name_col: Optional[str] = "Ingredient name",
+) -> List[Dict]:
     """
-    Read ingredient names from a CSV file.
+    Read ingredient data from a CSV file.
 
-    Args:
-        filepath:  Path to the CSV file.
-        name_col:  Name of the column containing ingredient names.
-                   If None, uses the first column.
-
-    Returns:
-        List of ingredient name strings (stripped, non-empty).
+    Returns a list of dicts, each with at minimum {"name": "..."}.
+    Additional columns (role, inci etc.) are included if present.
     """
-    ingredients: List[str] = []
+    results: List[Dict] = []
 
     with open(filepath, newline="", encoding="utf-8") as f:
         sample = f.read(4096)
@@ -46,38 +52,49 @@ def read_csv(filepath: str, name_col: Optional[str] = "Ingredient name") -> List
         all_rows = list(csv.reader(f, dialect=dialect))
 
     if not all_rows:
-        return ingredients
+        return results
 
-    # ── Detect and strip a leading numeric index row ──────────────────────────
+    # Strip numeric index row
     start = 0
     if _looks_like_index_row(all_rows[0]):
         start = 1
 
     if start >= len(all_rows):
-        return ingredients
+        return results
 
     header_row = all_rows[start]
     data_rows  = all_rows[start + 1:]
 
-    # ── Resolve column index ──────────────────────────────────────────────────
-    col_idx = 0
-    if name_col:
-        stripped_header = [h.strip() for h in header_row]
-        if name_col in stripped_header:
-            col_idx = stripped_header.index(name_col)
-            # Header row is already consumed — don't add it to ingredients
-        else:
-            # No matching header found; treat header row as data if it's not a known label
-            first = header_row[0].strip().lower()
-            if first not in _SKIP_FIRST_CELL:
-                data_rows = [header_row] + data_rows
+    stripped_header = [h.strip() for h in header_row]
 
-    # ── Extract values ────────────────────────────────────────────────────────
+    # Resolve name column index
+    name_idx = 0
+    if name_col and name_col in stripped_header:
+        name_idx = stripped_header.index(name_col)
+    else:
+        first = header_row[0].strip().lower()
+        if first not in _SKIP_FIRST_CELL:
+            data_rows = [header_row] + data_rows
+
+    # Resolve optional column indices
+    optional_indices = {}
+    for col_name, key in _OPTIONAL_COLS.items():
+        if col_name in stripped_header:
+            optional_indices[key] = stripped_header.index(col_name)
+
+    # Build result dicts
     for row in data_rows:
-        if col_idx >= len(row):
+        if name_idx >= len(row):
             continue
-        val = row[col_idx].strip()
-        if val:
-            ingredients.append(val)
+        name = row[name_idx].strip()
+        if not name:
+            continue
 
-    return ingredients
+        entry = {"name": name}
+        for key, idx in optional_indices.items():
+            if idx < len(row) and row[idx].strip():
+                entry[key] = row[idx].strip()
+
+        results.append(entry)
+
+    return results
